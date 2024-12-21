@@ -93,7 +93,6 @@ def match_instance_to_data(instance, data):
                 instance.x[0, group[0]] if len(group) == 1 else "" for group in data.groups
             ]
         assert len(instance.group_display_values) == len(data.groups)
-        instance.groups = data.groups
 
 
 class Model:
@@ -259,8 +258,9 @@ class LogitLink(Link):
         return "logit"
 
     @staticmethod
-    def f(x):
-        return np.log(x / (1 - x))
+    def f(x, epsilon=1e-15):
+        x_clipped = np.clip(x, epsilon, 1 - epsilon)
+        return np.log(x_clipped / (1 - x_clipped))
 
     @staticmethod
     def finv(x):

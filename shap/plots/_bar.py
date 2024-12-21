@@ -1,4 +1,5 @@
 import warnings
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as pl
 import numpy as np
@@ -8,15 +9,12 @@ import scipy
 from .. import Cohorts, Explanation
 from ..utils import format_value, ordinal_str
 from ..utils._exceptions import DimensionError
-from . import colors
 from ._labels import labels
-from ._utils import (
-    convert_ordering,
-    dendrogram_coords,
-    get_sort_order,
-    merge_nodes,
-    sort_inds,
-)
+from ._style import get_style
+from ._utils import convert_ordering, dendrogram_coords, get_sort_order, merge_nodes, sort_inds
+
+if TYPE_CHECKING:
+    from .._explanation import OpHistoryItem
 
 
 # TODO: improve the bar chart to look better like the waterfall plot with numbers inside the bars when they fit
@@ -53,7 +51,7 @@ def bar(
 
         By default, take the absolute value.
     clustering: np.ndarray or None
-        A partition tree, as returned by ``shap.utils.hclust``
+        A partition tree, as returned by :func:`shap.utils.hclust`
     clustering_cutoff: float
         Controls how much of the clustering structure is displayed.
     show_data: bool or str
@@ -62,20 +60,22 @@ def bar(
     ax: matplotlib Axes
         Axes object to draw the plot onto, otherwise uses the current Axes.
     show : bool
-        Whether ``matplotlib.pyplot.show()`` is called before returning.
+        Whether :external+mpl:func:`matplotlib.pyplot.show()` is called before returning.
         Setting this to ``False`` allows the plot
         to be customized further after it has been created.
 
     Returns
     -------
     ax: matplotlib Axes
-        Returns the Axes object with the plot drawn onto it. Only returned if ``show=False``.
+        Returns the :external+mpl:class:`~matplotlib.axes.Axes` object with the plot drawn onto it. Only
+        returned if ``show=False``.
 
     Examples
     --------
     See `bar plot examples <https://shap.readthedocs.io/en/latest/example_notebooks/api_examples/plots/bar.html>`_.
 
     """
+    style = get_style()
     # convert Explanation objects to dictionaries
     if isinstance(shap_values, Explanation):
         cohorts = {"": shap_values}
@@ -105,7 +105,7 @@ def bar(
             # collapse the Explanation arrays to be of shape (#features,)
             cohort_exps[i] = exp.abs.mean(0)
         if cohort_exps[i].shape != cohort_exps[0].shape:
-            emsg = "When passing several Explanation objects, they must all have " "the same number of feature columns!"
+            emsg = "When passing several Explanation objects, they must all have the same number of feature columns!"
             raise DimensionError(emsg)
         # TODO: check other attributes for equality? like feature names perhaps? probably clustering as well.
 
@@ -124,7 +124,7 @@ def bar(
                 "The clustering provided by the Explanation object does not seem to be a "
                 "partition tree, which is all shap.plots.bar supports."
             )
-    op_history = cohort_exps[0].op_history
+    op_history: list[OpHistoryItem] = cohort_exps[0].op_history
     values = np.array([cohort_exps[i].values for i in range(len(cohort_exps))])
 
     if len(values[0]) == 0:
@@ -132,7 +132,7 @@ def bar(
 
     # we show the data on auto only when there are no transforms (excluding getitem calls)
     if show_data == "auto":
-        transforms = [t for t in op_history if t.get("name") != "__getitem__"]
+        transforms = [op for op in op_history if op.name != "__getitem__"]
         show_data = len(transforms) == 0
 
     # TODO: Rather than just show the "1st token", "2nd token", etc. it would be better to show the "Instance 0's 1st but", etc
@@ -142,19 +142,19 @@ def bar(
     # build our auto xlabel based on the transform history of the Explanation object
     xlabel = "SHAP value"
     for op in op_history:
-        if op["name"] == "abs":
-            xlabel = "|" + xlabel + "|"
-        elif op["name"] == "__getitem__":
+        if op.name == "abs":
+            xlabel = f"|{xlabel}|"
+        elif op.name == "__getitem__":
             pass  # no need for slicing to effect our label, it will be used later to find the sizes of cohorts
         else:
-            xlabel = str(op["name"]) + "(" + xlabel + ")"
+            xlabel = f"{op.name}({xlabel})"
 
     # find how many instances are in each cohort (if they were created from an Explanation object)
     cohort_sizes = []
     for exp in cohort_exps:
         for op in exp.op_history:
-            if op.get("collapsed_instances", False):  # see if this if the first op to collapse the instances
-                cohort_sizes.append(op["prev_shape"][0])
+            if op.collapsed_instances:  # see if this if the first op to collapse the instances
+                cohort_sizes.append(op.prev_shape[0])
                 break
 
     # unwrap any pandas series
@@ -197,7 +197,7 @@ def bar(
             ):
                 # values, partition_tree, orig_inds = merge_nodes(values, partition_tree, orig_inds)
                 partition_tree, ind1, ind2 = merge_nodes(np.abs(values).mean(0), partition_tree)
-                for i in range(len(values)):
+                for _ in range(len(values)):
                     values[:, ind1] += values[:, ind2]
                     values = np.delete(values, ind2, 1)
                     orig_inds[ind1] += orig_inds[ind2]
@@ -211,7 +211,7 @@ def bar(
     feature_inds = feature_order[:max_display]
     y_pos = np.arange(len(feature_inds), 0, -1)
     feature_names_new = []
-    for pos, inds in enumerate(orig_inds):
+    for inds in orig_inds:
         if len(inds) == 1:
             feature_names_new.append(feature_names[inds[0]])
         else:
@@ -264,7 +264,10 @@ def bar(
             values[i, feature_inds],
             bar_width,
             align="center",
-            color=[colors.blue_rgb if values[i, feature_inds[j]] <= 0 else colors.red_rgb for j in range(len(y_pos))],
+            color=[
+                style.primary_color_negative if values[i, feature_inds[j]] <= 0 else style.primary_color_positive
+                for j in range(len(y_pos))
+            ],
             hatch=patterns[i],
             edgecolor=(1, 1, 1, 0.8),
             label=f"{cohort_labels[i]} [{cohort_sizes[i] if i < len(cohort_sizes) else None}]",
@@ -290,7 +293,7 @@ def bar(
                     format_value(values[i, ind], "%+0.02f"),
                     horizontalalignment="right",
                     verticalalignment="center",
-                    color=colors.blue_rgb,
+                    color=style.primary_color_negative,
                     fontsize=12,
                 )
             else:
@@ -300,7 +303,7 @@ def bar(
                     format_value(values[i, ind], "%+0.02f"),
                     horizontalalignment="left",
                     verticalalignment="center",
-                    color=colors.red_rgb,
+                    color=style.primary_color_positive,
                     fontsize=12,
                 )
 
@@ -348,7 +351,7 @@ def bar(
     # (these fall behind the black ones with just the feature name)
     tick_labels = ax.yaxis.get_majorticklabels()
     for i in range(num_features):
-        tick_labels[i].set_color("#999999")
+        tick_labels[i].set_color(style.tick_labels_color)
 
     # draw a dendrogram if we are given a partition tree
     if partition_tree is not None:
@@ -399,6 +402,7 @@ def bar_legacy(shap_values, features=None, feature_names=None, max_display=None,
         "https://shap.readthedocs.io/en/latest/example_notebooks/api_examples/migrating-to-new-api.html",
         DeprecationWarning,
     )
+    style = get_style()
     # unwrap pandas series
     if isinstance(features, pd.Series):
         if feature_names is None:
@@ -423,7 +427,10 @@ def bar_legacy(shap_values, features=None, feature_names=None, max_display=None,
         shap_values[feature_inds],
         0.7,
         align="center",
-        color=[colors.red_rgb if shap_values[feature_inds[i]] > 0 else colors.blue_rgb for i in range(len(y_pos))],
+        color=[
+            style.primary_color_positive if shap_values[feature_inds[i]] > 0 else style.primary_color_negative
+            for i in range(len(y_pos))
+        ],
     )
     pl.yticks(y_pos, fontsize=13)
     if features is not None:
